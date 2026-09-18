@@ -3,6 +3,7 @@ backend/.venv/
 backend/__pycache__/
 **/__pycache__/
 *.pyc
+backend/backend.log
 
 # MediaPipe model file — re-downloaded by setup, not checked in (see README)
 backend/models/*.task
@@ -10,6 +11,11 @@ backend/models/*.task
 # Node
 frontend/node_modules/
 frontend/dist/
+
+# Secrets — the USDA FoodData Central API key (Phase 4) goes in backend/.env,
+# never committed.
+.env
+*.env
 
 # Editor / OS
 .DS_Store

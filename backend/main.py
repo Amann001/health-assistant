@@ -6,13 +6,26 @@ pose_engine.py. Nutrition (Phase 4) still returns a hardcoded stub —
 that's next.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import pose_engine
 
 app = FastAPI(title="Personal Health Assistant API")
+
+# A single webcam-frame JPEG is normally well under 1MB. This caps uploads
+# generously above that so a misbehaving client (or, later, anyone hitting
+# an exposed tunnel URL) can't hand us an arbitrarily large body and eat
+# memory decoding it.
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8MB
+
+
+async def _read_limited(upload: UploadFile) -> bytes:
+    data = await upload.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Uploaded file is too large.")
+    return data
 
 # Single-user, single-session app: one RepCounter per exercise, kept in
 # memory for the lifetime of the backend process. /api/form/start resets
@@ -71,7 +84,7 @@ async def analyze_form(frame: UploadFile = File(...), exercise: str = Form("squa
     if exercise not in _rep_counters:
         exercise = "squat"
 
-    image_bytes = await frame.read()
+    image_bytes = await _read_limited(frame)
     result = pose_engine.analyze_frame(image_bytes, exercise, _rep_counters[exercise])
 
     return FormAnalysisResponse(**result)
@@ -96,7 +109,7 @@ async def analyze_food(image: UploadFile = File(...)):
       3. Look up macros for that food (e.g. via USDA FoodData Central API).
       4. Return the real calorie/macro numbers instead of the stub below.
     """
-    _ = await image.read()  # image bytes are available here once you need them
+    _ = await _read_limited(image)  # image bytes are available here once you need them
 
     return NutritionAnalysisResponse(
         food_name="unknown",
