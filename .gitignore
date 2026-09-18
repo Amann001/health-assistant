@@ -1,0 +1,18 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# MediaPipe model file — re-downloaded by setup, not checked in (see README)
+backend/models/*.task
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Editor / OS
+.DS_Store
+
+# Claude Code session-local state (not project config)
+.claude/scheduled_tasks.lock
