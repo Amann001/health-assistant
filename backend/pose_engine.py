@@ -79,6 +79,23 @@ def _joint_point(landmarks, joint: str, side: str):
     return (lm.x, lm.y)
 
 
+def _joint_visibility(landmarks, joint: str, side: str) -> float:
+    idx = JOINT_LANDMARKS[joint][0 if side == "left" else 1]
+    return landmarks[idx].visibility
+
+
+def _side_angle(landmarks, joints, side: str) -> float:
+    points = [_joint_point(landmarks, j, side) for j in joints]
+    return _angle(*points)
+
+
+# Below this visibility, we don't trust that side's landmarks enough to use
+# them for the bilateral (both-legs-moving) check — a tight side-profile
+# view can genuinely hide the far leg, and we'd rather fall back to
+# single-leg counting than let occlusion noise block real reps.
+_MIN_VISIBILITY_FOR_BILATERAL_CHECK = 0.5
+
+
 # --- Exercise configuration -------------------------------------------
 # Each exercise names the three joints that define its primary angle (the
 # one the up/down rep state machine watches) and, optionally, a secondary
@@ -100,6 +117,14 @@ EXERCISES = {
         "down_threshold": 140,    # knee angle below this = started descending -> now tracking a rep attempt
         "good_depth_max": 100,    # rep's lowest knee angle must reach <= this to count as deep enough
         "good_back_min": 55,      # hip angle at the deepest point must stay >= this (not leaning too far forward)
+        # A real squat bends BOTH knees together. A single-leg motion (a
+        # knee raise, a high-knee march, a kick) bends only the tracked
+        # side's knee through this same angle range and would otherwise be
+        # indistinguishable from a squat rep. This is how far the *other*
+        # leg is allowed to lag behind down_threshold and still count as
+        # "also bending" — generous enough for real asymmetry/lag between
+        # legs, but nowhere near a leg that's staying straight.
+        "bilateral_tolerance": 15,
     },
 }
 
@@ -125,7 +150,13 @@ class RepCounter:
         self._min_primary_this_rep = 180.0
         self._secondary_at_min = 180.0
 
-    def update(self, exercise: str, primary_angle: float, secondary_angle: float) -> str:
+    def update(
+        self,
+        exercise: str,
+        primary_angle: float,
+        secondary_angle: float,
+        other_side_primary_angle: float | None = None,
+    ) -> str:
         """Feed in this frame's angles, return a short feedback string.
 
         State machine: "up" -> "down" happens as soon as the primary angle
@@ -136,11 +167,22 @@ class RepCounter:
         whether the back stayed upright. "down" -> "up" (a completed rep)
         happens once the primary angle rises back past up_threshold; only
         then do we grade the rep using the deepest-point values we tracked.
+
+        `other_side_primary_angle` is the same angle measured on the *other*
+        leg, when the camera can see it well enough to trust (None if not —
+        see analyze_frame). Entering "down" requires that leg to also be
+        bending, which is what stops a single-leg motion from being read as
+        a squat rep (see EXERCISES["squat"]["bilateral_tolerance"]).
         """
         cfg = EXERCISES[exercise]
         feedback = ""
 
-        if self.stage == "up" and primary_angle < cfg["down_threshold"]:
+        other_leg_also_bending = (
+            other_side_primary_angle is None
+            or other_side_primary_angle < cfg["down_threshold"] + cfg.get("bilateral_tolerance", 0)
+        )
+
+        if self.stage == "up" and primary_angle < cfg["down_threshold"] and other_leg_also_bending:
             self.stage = "down"
             self._min_primary_this_rep = primary_angle
             self._secondary_at_min = secondary_angle
@@ -200,15 +242,20 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
 
     landmarks = result.pose_landmarks[0]  # first (only) detected person
     side = _pick_visible_side(landmarks)
+    other_side = "right" if side == "left" else "left"
 
     cfg = EXERCISES[exercise]
-    primary_points = [_joint_point(landmarks, j, side) for j in cfg["primary_joints"]]
-    secondary_points = [_joint_point(landmarks, j, side) for j in cfg["secondary_joints"]]
+    primary_angle = _side_angle(landmarks, cfg["primary_joints"], side)
+    secondary_angle = _side_angle(landmarks, cfg["secondary_joints"], side)
 
-    primary_angle = _angle(*primary_points)
-    secondary_angle = _angle(*secondary_points)
+    other_leg_visible = (
+        _joint_visibility(landmarks, "knee", other_side) >= _MIN_VISIBILITY_FOR_BILATERAL_CHECK
+    )
+    other_side_primary_angle = (
+        _side_angle(landmarks, cfg["primary_joints"], other_side) if other_leg_visible else None
+    )
 
-    feedback = counter.update(exercise, primary_angle, secondary_angle)
+    feedback = counter.update(exercise, primary_angle, secondary_angle, other_side_primary_angle)
 
     return {
         "exercise": exercise,
