@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import WebcamFeed from '../components/WebcamFeed.jsx'
 import { startFormSession, analyzeFormFrame } from '../api.js'
+import { speak, stopSpeaking } from '../speech.js'
 
 // Only squat is implemented server-side so far (see backend/pose_engine.py).
 // This becomes a dropdown once push-up/curl are added.
@@ -20,15 +21,34 @@ function Workout() {
   // when the next interval tick fires, skip that tick rather than firing a
   // second request on top of it.
   const busyRef = useRef(false)
+  // Web Speech API generally needs its first call to happen from a user
+  // gesture (the Start Session click) — this also keeps us from reading
+  // the placeholder text out loud on page load, before anyone's clicked
+  // anything.
+  const hasStartedRef = useRef(false)
+  const lastSpokenRef = useRef(null)
 
   const [sessionActive, setSessionActive] = useState(false)
   const [feedback, setFeedback] = useState('Press "Start Session" to begin.')
   const [repCount, setRepCount] = useState(0)
   const [goodFormReps, setGoodFormReps] = useState(0)
 
+  // Speak each new feedback message once, as it arrives — not every 300ms
+  // tick, since most ticks repeat the same cue while nothing's changed.
+  useEffect(() => {
+    if (!hasStartedRef.current) return
+    if (feedback && feedback !== lastSpokenRef.current) {
+      lastSpokenRef.current = feedback
+      speak(feedback)
+    }
+  }, [feedback])
+
   // Stop the capture loop if the user navigates away mid-session.
   useEffect(() => {
-    return () => clearInterval(intervalRef.current)
+    return () => {
+      clearInterval(intervalRef.current)
+      stopSpeaking()
+    }
   }, [])
 
   function captureFrame() {
@@ -72,6 +92,8 @@ function Workout() {
       setFeedback('Could not reach the backend. Is it running on port 8000?')
       return
     }
+    hasStartedRef.current = true
+    lastSpokenRef.current = null
     setRepCount(0)
     setGoodFormReps(0)
     setFeedback('Session started — get in position.')
@@ -82,6 +104,7 @@ function Workout() {
   function stopSession() {
     clearInterval(intervalRef.current)
     intervalRef.current = null
+    stopSpeaking()
     setSessionActive(false)
     setFeedback(`Session ended — ${repCount} reps, ${goodFormReps} good form.`)
   }
