@@ -95,6 +95,15 @@ def _side_angle(landmarks, joints, side: str) -> float:
 # single-leg counting than let occlusion noise block real reps.
 _MIN_VISIBILITY_FOR_BILATERAL_CHECK = 0.5
 
+# Below this, we don't trust the TRACKED side's own hip/knee/ankle enough to
+# read an angle from it at all -- e.g. sitting close to a laptop camera
+# often only frames the upper body, so MediaPipe still emits a guessed
+# position for the legs (it always emits all 33 points) with low
+# confidence, and that guess drifts as the rest of the pose changes even
+# though the legs never actually moved. Refuse to track reps at all rather
+# than trust an ungrounded guess.
+_MIN_VISIBILITY_FOR_TRACKING = 0.6
+
 
 # --- Exercise configuration -------------------------------------------
 # Each exercise names the three joints that define its primary angle (the
@@ -125,6 +134,15 @@ EXERCISES = {
         # "also bending" — generous enough for real asymmetry/lag between
         # legs, but nowhere near a leg that's staying straight.
         "bilateral_tolerance": 15,
+        # Knee angle alone can be fooled by any motion that bends the knee
+        # without the body actually descending — bowing forward while
+        # seated is the clearest example: the torso leans, but the hips
+        # never travel downward. A real squat visibly drops the hips toward
+        # the floor. This is the minimum hip movement required (measured as
+        # a fraction of torso length -- shoulder-to-hip distance -- so it
+        # scales with how close/far you are from the camera) before a
+        # completed up/down/up cycle is trusted as an actual squat rep.
+        "min_hip_drop_ratio": 0.15,
     },
 }
 
@@ -142,6 +160,9 @@ class RepCounter:
     good_form_reps: int = 0
     _min_primary_this_rep: float = 180.0
     _secondary_at_min: float = 180.0
+    _hip_y_at_rep_start: float | None = None
+    _max_hip_y_this_rep: float | None = None
+    _torso_length_this_rep: float | None = None
 
     def reset(self):
         self.stage = "up"
@@ -149,6 +170,9 @@ class RepCounter:
         self.good_form_reps = 0
         self._min_primary_this_rep = 180.0
         self._secondary_at_min = 180.0
+        self._hip_y_at_rep_start = None
+        self._max_hip_y_this_rep = None
+        self._torso_length_this_rep = None
 
     def update(
         self,
@@ -156,6 +180,8 @@ class RepCounter:
         primary_angle: float,
         secondary_angle: float,
         other_side_primary_angle: float | None = None,
+        hip_y: float | None = None,
+        torso_length: float | None = None,
     ) -> str:
         """Feed in this frame's angles, return a short feedback string.
 
@@ -173,6 +199,14 @@ class RepCounter:
         see analyze_frame). Entering "down" requires that leg to also be
         bending, which is what stops a single-leg motion from being read as
         a squat rep (see EXERCISES["squat"]["bilateral_tolerance"]).
+
+        `hip_y` and `torso_length` (both in the same normalized image-coord
+        units MediaPipe reports) track how far the hip actually traveled
+        downward across the rep. A completed up/down/up cycle only counts
+        as a rep if that travel clears `min_hip_drop_ratio` — otherwise
+        something bent the tracked knee angle (torso lean, noisy landmarks)
+        without the body actually squatting, and we throw the cycle away
+        instead of counting it.
         """
         cfg = EXERCISES[exercise]
         feedback = ""
@@ -186,25 +220,45 @@ class RepCounter:
             self.stage = "down"
             self._min_primary_this_rep = primary_angle
             self._secondary_at_min = secondary_angle
+            self._hip_y_at_rep_start = hip_y
+            self._max_hip_y_this_rep = hip_y
+            self._torso_length_this_rep = torso_length
 
         elif self.stage == "down":
             if primary_angle < self._min_primary_this_rep:
                 self._min_primary_this_rep = primary_angle
                 self._secondary_at_min = secondary_angle
+            if hip_y is not None and (self._max_hip_y_this_rep is None or hip_y > self._max_hip_y_this_rep):
+                self._max_hip_y_this_rep = hip_y
 
             if primary_angle > cfg["up_threshold"]:
                 self.stage = "up"
-                self.rep_count += 1
-                deep_enough = self._min_primary_this_rep <= cfg["good_depth_max"]
-                back_ok = self._secondary_at_min >= cfg["good_back_min"]
 
-                if deep_enough and back_ok:
-                    self.good_form_reps += 1
-                    feedback = f"Good rep! ({self.rep_count} total)"
-                elif not deep_enough:
-                    feedback = f"Rep {self.rep_count} counted — go a bit lower next time."
+                min_drop_ratio = cfg.get("min_hip_drop_ratio")
+                hip_dropped_enough = True
+                if (
+                    min_drop_ratio is not None
+                    and self._hip_y_at_rep_start is not None
+                    and self._max_hip_y_this_rep is not None
+                    and self._torso_length_this_rep
+                ):
+                    hip_drop = self._max_hip_y_this_rep - self._hip_y_at_rep_start
+                    hip_dropped_enough = (hip_drop / self._torso_length_this_rep) >= min_drop_ratio
+
+                if not hip_dropped_enough:
+                    feedback = "That didn't look like a squat — bend your knees AND lower your hips toward the floor."
                 else:
-                    feedback = f"Rep {self.rep_count} counted — keep your back straighter."
+                    self.rep_count += 1
+                    deep_enough = self._min_primary_this_rep <= cfg["good_depth_max"]
+                    back_ok = self._secondary_at_min >= cfg["good_back_min"]
+
+                    if deep_enough and back_ok:
+                        self.good_form_reps += 1
+                        feedback = f"Good rep! ({self.rep_count} total)"
+                    elif not deep_enough:
+                        feedback = f"Rep {self.rep_count} counted — go a bit lower next time."
+                    else:
+                        feedback = f"Rep {self.rep_count} counted — keep your back straighter."
 
         if not feedback:
             feedback = "Good — going down, keep it controlled" if self.stage == "down" else "Ready — squat down"
@@ -245,6 +299,20 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
     other_side = "right" if side == "left" else "left"
 
     cfg = EXERCISES[exercise]
+
+    # Refuse to track at all if the tracked side's own hip/knee/ankle aren't
+    # clearly visible (e.g. sitting close to the camera, legs out of frame
+    # or occluded) — see _MIN_VISIBILITY_FOR_TRACKING for why this matters.
+    tracked_joints = set(cfg["primary_joints"]) | set(cfg["secondary_joints"])
+    min_tracked_visibility = min(_joint_visibility(landmarks, j, side) for j in tracked_joints)
+    if min_tracked_visibility < _MIN_VISIBILITY_FOR_TRACKING:
+        return {
+            "exercise": exercise,
+            "rep_count": counter.rep_count,
+            "good_form_reps": counter.good_form_reps,
+            "feedback": "Can't see your full body clearly — step back so your hips, knees, and ankles are all in frame.",
+        }
+
     primary_angle = _side_angle(landmarks, cfg["primary_joints"], side)
     secondary_angle = _side_angle(landmarks, cfg["secondary_joints"], side)
 
@@ -255,7 +323,14 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
         _side_angle(landmarks, cfg["primary_joints"], other_side) if other_leg_visible else None
     )
 
-    feedback = counter.update(exercise, primary_angle, secondary_angle, other_side_primary_angle)
+    hip_point = _joint_point(landmarks, "hip", side)
+    shoulder_point = _joint_point(landmarks, "shoulder", side)
+    hip_y = hip_point[1]
+    torso_length = math.hypot(shoulder_point[0] - hip_point[0], shoulder_point[1] - hip_point[1])
+
+    feedback = counter.update(
+        exercise, primary_angle, secondary_angle, other_side_primary_angle, hip_y, torso_length
+    )
 
     return {
         "exercise": exercise,
