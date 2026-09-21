@@ -26,6 +26,8 @@ health-assistant/
         WebcamFeed.jsx  Shared getUserMedia webcam component
         NavBar.jsx
       api.js            Shared axios helpers for the form endpoints
+      speech.js          Web Speech API (TTS) wrapper — spoken coaching cues
+      skeleton.js         Draws the pose skeleton over the video feed
       App.jsx            React Router wiring
       main.jsx
       index.css
@@ -69,12 +71,24 @@ Visit the URL Vite prints (usually http://localhost:5173). Allow camera access w
 
 1. Open the Workout page, allow the camera, click **Start Session**.
 2. Do a few squats in view of the camera — rep count and feedback update live,
-   roughly every 300ms. Click **Stop Session** to end and see a short summary.
+   roughly every 300ms, with a skeleton drawn over your body and each new cue
+   spoken aloud. Click **Stop Session** to end and see a short summary.
 3. The Nutrition page is still Phase 4 territory — "Scan Meal" just proves the
    camera/backend plumbing for now.
 
 ## Status / next steps
 
 See the "Build roadmap" section of [CLAUDE.md](CLAUDE.md). Currently mid-Phase 3:
-squat detection (angle math + rep-counting state machine) is implemented and
-unit-verified, skeleton overlay and TTS cues are next, then push-up/curl.
+
+- Done: continuous frame capture, squat angle/rep-counting logic, a skeleton
+  overlay on the video feed, and spoken (TTS) coaching cues.
+- Two real false-positive bugs were found and fixed through live testing —
+  a single-leg motion being mistaken for a squat rep, and a seated
+  torso-bow being mistaken for one — see the git history in `pose_engine.py`
+  for what each fix actually checks and why.
+- **Not yet done: a full live squat-verification pass** — the fixes above
+  are synthetically tested but not yet confirmed against a real body/camera.
+  The angle thresholds in `EXERCISES["squat"]` are starting guesses and will
+  likely need retuning once that happens.
+- After that: push-up and bicep curl (same `pose_engine.py` pattern), then
+  Phase 4 (nutrition scanner).
