@@ -27,6 +27,8 @@ health-assistant/
         NavBar.jsx
       api.js            Shared axios helpers for the form endpoints
       speech.js          Web Speech API (TTS) wrapper — spoken coaching cues
+      listen.js           Web Speech API (STT) wrapper — push-to-talk voice input
+      voiceCommands.js    Matches transcribed speech to in-session commands
       skeleton.js         Draws the pose skeleton over the video feed
       App.jsx            React Router wiring
       main.jsx
@@ -71,9 +73,16 @@ Visit the URL Vite prints (usually http://localhost:5173). Allow camera access w
 
 1. Open the Workout page, allow the camera, click **Start Session**.
 2. Do a few squats in view of the camera — rep count and feedback update live,
-   roughly every 300ms, with a skeleton drawn over your body and each new cue
-   spoken aloud. Click **Stop Session** to end and see a short summary.
-3. The Nutrition page is still Phase 4 territory — "Scan Meal" just proves the
+   roughly every 300ms, with a skeleton drawn over your body, a live depth
+   gauge filling as you descend, and each new cue spoken aloud. String
+   together good-form reps for a streak badge (🔥 at 5+, at 10+ it goes
+   legendary).
+3. Hold **Hold to Talk** and ask the coach a question — "how many reps have
+   I done," "how's my form," "what's my streak," or say "stop" to end the
+   session by voice. It only answers from the current session (no history
+   yet — see below).
+4. Click **Stop Session** to end and see a short summary.
+5. The Nutrition page is still Phase 4 territory — "Scan Meal" just proves the
    camera/backend plumbing for now.
 
 ## Status / next steps
@@ -81,7 +90,9 @@ Visit the URL Vite prints (usually http://localhost:5173). Allow camera access w
 See the "Build roadmap" section of [CLAUDE.md](CLAUDE.md). Currently mid-Phase 3:
 
 - Done: continuous frame capture, squat angle/rep-counting logic, a skeleton
-  overlay on the video feed, and spoken (TTS) coaching cues.
+  overlay, spoken (TTS) coaching cues, a live depth gauge, good-form streak
+  tracking, and a push-to-talk voice command layer (STT) that answers
+  simple questions from the live session state.
 - Two real false-positive bugs were found and fixed through live testing —
   a single-leg motion being mistaken for a squat rep, and a seated
   torso-bow being mistaken for one — see the git history in `pose_engine.py`
@@ -90,5 +101,9 @@ See the "Build roadmap" section of [CLAUDE.md](CLAUDE.md). Currently mid-Phase 3
   are synthetically tested but not yet confirmed against a real body/camera.
   The angle thresholds in `EXERCISES["squat"]` are starting guesses and will
   likely need retuning once that happens.
-- After that: push-up and bicep curl (same `pose_engine.py` pattern), then
-  Phase 4 (nutrition scanner).
+- The voice command layer only answers from the *current* session (rep
+  count, form, streak) — CLAUDE.md's full Module 4 vision (grounded
+  Q&A over *logged history*, e.g. "how was my form this week") needs the
+  SQLite database from Phase 5, which hasn't been built yet.
+- After live verification: push-up and bicep curl (same `pose_engine.py`
+  pattern), then Phase 4 (nutrition scanner).
