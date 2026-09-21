@@ -62,11 +62,18 @@ class FormAnalysisResponse(BaseModel):
     exercise: str
     rep_count: int
     good_form_reps: int
+    # Consecutive good-form reps right now (resets on any non-qualifying
+    # rep) — drives the frontend's live combo display.
+    good_form_streak: int
     feedback: str
     # None when no person is detected in the frame at all; present (but
     # possibly showing a shaky/incomplete pose) whenever MediaPipe found
     # someone, even if pose_engine decided not to trust it for rep-counting.
     landmarks: list[Landmark] | None = None
+    # 0-1 progress toward good depth on the CURRENT frame, for a live gauge
+    # while descending. None whenever we're not confident enough in the
+    # angle to show it (see pose_engine.analyze_frame).
+    depth_progress: float | None = None
 
 
 class FormStartResponse(BaseModel):

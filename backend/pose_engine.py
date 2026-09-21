@@ -11,6 +11,7 @@ https://ai.google.dev/mediapipe/solutions/vision/pose_landmarker#pose_landmarker
 """
 
 import math
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -146,6 +147,28 @@ EXERCISES = {
     },
 }
 
+# Varied phrasing for a completed good-form rep, so the coach doesn't repeat
+# the exact same line every time — picked at random per rep. `{n}` is filled
+# in with the rep number.
+_GOOD_REP_PHRASES = [
+    "Beautiful depth! That's rep {n}.",
+    "Textbook form — rep {n} in the books.",
+    "That's how it's done! Rep {n}.",
+    "Strong rep {n}, keep that up.",
+    "Nice and controlled — rep {n}.",
+]
+
+# Called out instead of the usual good-rep line once the current good-form
+# streak (RepCounter.good_form_streak) hits one of these numbers — replacing
+# the routine message with something that actually matches how good a
+# streak that long is.
+_STREAK_PHRASES = {
+    3: "Three in a row — you're finding your rhythm!",
+    5: "Five straight good reps — you're on fire!",
+    10: "Ten in a row?! Incredible form streak.",
+    15: "Fifteen straight. That's elite form endurance.",
+}
+
 
 @dataclass
 class RepCounter:
@@ -158,6 +181,9 @@ class RepCounter:
     stage: str = "up"
     rep_count: int = 0
     good_form_reps: int = 0
+    # Consecutive good-form reps right now — resets to 0 the moment a rep
+    # doesn't qualify. Exposed to the frontend for the live combo display.
+    good_form_streak: int = 0
     _min_primary_this_rep: float = 180.0
     _secondary_at_min: float = 180.0
     _hip_y_at_rep_start: float | None = None
@@ -168,6 +194,7 @@ class RepCounter:
         self.stage = "up"
         self.rep_count = 0
         self.good_form_reps = 0
+        self.good_form_streak = 0
         self._min_primary_this_rep = 180.0
         self._secondary_at_min = 180.0
         self._hip_y_at_rep_start = None
@@ -254,16 +281,33 @@ class RepCounter:
 
                     if deep_enough and back_ok:
                         self.good_form_reps += 1
-                        feedback = f"Good rep! ({self.rep_count} total)"
+                        self.good_form_streak += 1
+                        if self.good_form_streak in _STREAK_PHRASES:
+                            feedback = _STREAK_PHRASES[self.good_form_streak]
+                        else:
+                            feedback = random.choice(_GOOD_REP_PHRASES).format(n=self.rep_count)
                     elif not deep_enough:
+                        self.good_form_streak = 0
                         feedback = f"Rep {self.rep_count} counted — go a bit lower next time."
                     else:
+                        self.good_form_streak = 0
                         feedback = f"Rep {self.rep_count} counted — keep your back straighter."
 
         if not feedback:
             feedback = "Good — going down, keep it controlled" if self.stage == "down" else "Ready — squat down"
 
         return feedback
+
+
+def _depth_progress(primary_angle: float, cfg: dict) -> float:
+    """0-1 progress toward good squat depth, for the frontend's live depth
+    gauge — 0 at standing (up_threshold), 1 once good_depth_max is reached.
+    Lets the user see how close to a good rep they are *during* the
+    descent, rather than only finding out after the rep completes.
+    """
+    span = cfg["up_threshold"] - cfg["good_depth_max"]
+    progress = (cfg["up_threshold"] - primary_angle) / span
+    return max(0.0, min(1.0, progress))
 
 
 def _landmarks_payload(landmarks) -> list[dict]:
@@ -290,8 +334,10 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "exercise": exercise,
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
+            "good_form_streak": counter.good_form_streak,
             "feedback": "Could not decode frame.",
             "landmarks": None,
+            "depth_progress": None,
         }
 
     # MediaPipe expects RGB; OpenCV decodes to BGR by default.
@@ -304,8 +350,10 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "exercise": exercise,
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
+            "good_form_streak": counter.good_form_streak,
             "feedback": "No person detected — step into frame.",
             "landmarks": None,
+            "depth_progress": None,
         }
 
     landmarks = result.pose_landmarks[0]  # first (only) detected person
@@ -329,8 +377,11 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "exercise": exercise,
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
+            "good_form_streak": counter.good_form_streak,
             "feedback": "Can't see your full body clearly — step back so your hips, knees, and ankles are all in frame.",
             "landmarks": landmarks_payload,
+            # Not confident enough in this angle to drive the depth gauge.
+            "depth_progress": None,
         }
 
     primary_angle = _side_angle(landmarks, cfg["primary_joints"], side)
@@ -356,6 +407,8 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
         "exercise": exercise,
         "rep_count": counter.rep_count,
         "good_form_reps": counter.good_form_reps,
+        "good_form_streak": counter.good_form_streak,
         "feedback": feedback,
         "landmarks": landmarks_payload,
+        "depth_progress": _depth_progress(primary_angle, cfg),
     }
