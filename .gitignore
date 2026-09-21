@@ -4,6 +4,7 @@ backend/__pycache__/
 **/__pycache__/
 *.pyc
 backend/backend.log
+backend/.pytest_cache/
 
 # MediaPipe model file — re-downloaded by setup, not checked in (see README)
 backend/models/*.task

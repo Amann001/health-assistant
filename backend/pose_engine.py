@@ -181,8 +181,10 @@ def exercise_intro(exercise: str) -> str:
     update a separate description string). Generating it from the same
     numbers the rep counter uses guarantees it always matches reality.
     """
-    cfg = EXERCISES[exercise]
-    if exercise == "squat":
+    # .get(), not [exercise] -- an exercise with no EXERCISES entry yet must
+    # still reach the fallback string below instead of raising KeyError.
+    cfg = EXERCISES.get(exercise)
+    if exercise == "squat" and cfg:
         return (
             "Let's check your squat. For a good rep, bend both knees down to about "
             f"parallel or lower — that's roughly {cfg['good_depth_max']} degrees or less "
