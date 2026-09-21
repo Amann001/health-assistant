@@ -52,11 +52,21 @@ def health_check():
     return {"status": "ok"}
 
 
+class Landmark(BaseModel):
+    x: float
+    y: float
+    visibility: float
+
+
 class FormAnalysisResponse(BaseModel):
     exercise: str
     rep_count: int
     good_form_reps: int
     feedback: str
+    # None when no person is detected in the frame at all; present (but
+    # possibly showing a shaky/incomplete pose) whenever MediaPipe found
+    # someone, even if pose_engine decided not to trust it for rep-counting.
+    landmarks: list[Landmark] | None = None
 
 
 class FormStartResponse(BaseModel):

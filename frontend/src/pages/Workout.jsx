@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import WebcamFeed from '../components/WebcamFeed.jsx'
 import { startFormSession, analyzeFormFrame } from '../api.js'
 import { speak, stopSpeaking } from '../speech.js'
+import { drawSkeleton } from '../skeleton.js'
 
 // Only squat is implemented server-side so far (see backend/pose_engine.py).
 // This becomes a dropdown once push-up/curl are added.
@@ -16,6 +17,7 @@ const CAPTURE_INTERVAL_MS = 300
 function Workout() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
+  const overlayCanvasRef = useRef(null)
   const intervalRef = useRef(null)
   // Guards against overlapping requests: if a frame is still being analyzed
   // when the next interval tick fires, skip that tick rather than firing a
@@ -76,6 +78,9 @@ function Workout() {
       setFeedback(data.feedback)
       setRepCount(data.rep_count)
       setGoodFormReps(data.good_form_reps)
+      if (overlayCanvasRef.current && videoRef.current) {
+        drawSkeleton(overlayCanvasRef.current, videoRef.current, data.landmarks)
+      }
     } catch (err) {
       console.error(err)
       setFeedback('Lost connection to the backend — is it still running?')
@@ -105,6 +110,9 @@ function Workout() {
     clearInterval(intervalRef.current)
     intervalRef.current = null
     stopSpeaking()
+    if (overlayCanvasRef.current && videoRef.current) {
+      drawSkeleton(overlayCanvasRef.current, videoRef.current, null)
+    }
     setSessionActive(false)
     setFeedback(`Session ended — ${repCount} reps, ${goodFormReps} good form.`)
   }
@@ -117,7 +125,10 @@ function Workout() {
         and analyzed automatically every {CAPTURE_INTERVAL_MS}ms — no need to click anything
         per rep.
       </p>
-      <WebcamFeed videoRef={videoRef} />
+      <div className="webcam-container">
+        <WebcamFeed videoRef={videoRef} />
+        <canvas ref={overlayCanvasRef} className="skeleton-overlay" />
+      </div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
       {sessionActive ? (

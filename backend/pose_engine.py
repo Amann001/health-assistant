@@ -266,6 +266,18 @@ class RepCounter:
         return feedback
 
 
+def _landmarks_payload(landmarks) -> list[dict]:
+    """Convert MediaPipe's 33 raw landmarks into plain JSON-serializable
+    dicts for the frontend's skeleton overlay. x/y are normalized (0-1)
+    relative to the analyzed frame — the frontend maps them onto the
+    displayed video element's actual pixel size. We send all 33 points
+    (not just the ones pose_engine's angle math uses) so the overlay can
+    draw a full stick figure, including joints — elbows, wrists — that
+    only matter once push-up/curl are added.
+    """
+    return [{"x": lm.x, "y": lm.y, "visibility": lm.visibility} for lm in landmarks]
+
+
 def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dict:
     """Run pose estimation + form analysis on one JPEG frame.
 
@@ -279,6 +291,7 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
             "feedback": "Could not decode frame.",
+            "landmarks": None,
         }
 
     # MediaPipe expects RGB; OpenCV decodes to BGR by default.
@@ -292,9 +305,11 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
             "feedback": "No person detected — step into frame.",
+            "landmarks": None,
         }
 
     landmarks = result.pose_landmarks[0]  # first (only) detected person
+    landmarks_payload = _landmarks_payload(landmarks)
     side = _pick_visible_side(landmarks)
     other_side = "right" if side == "left" else "left"
 
@@ -303,6 +318,10 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
     # Refuse to track at all if the tracked side's own hip/knee/ankle aren't
     # clearly visible (e.g. sitting close to the camera, legs out of frame
     # or occluded) — see _MIN_VISIBILITY_FOR_TRACKING for why this matters.
+    # We still return landmarks here (rather than None): MediaPipe DID find
+    # a person, so showing the shaky/incomplete skeleton it saw is useful
+    # feedback for why tracking paused, instead of the overlay just
+    # vanishing with no explanation.
     tracked_joints = set(cfg["primary_joints"]) | set(cfg["secondary_joints"])
     min_tracked_visibility = min(_joint_visibility(landmarks, j, side) for j in tracked_joints)
     if min_tracked_visibility < _MIN_VISIBILITY_FOR_TRACKING:
@@ -311,6 +330,7 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
             "rep_count": counter.rep_count,
             "good_form_reps": counter.good_form_reps,
             "feedback": "Can't see your full body clearly — step back so your hips, knees, and ankles are all in frame.",
+            "landmarks": landmarks_payload,
         }
 
     primary_angle = _side_angle(landmarks, cfg["primary_joints"], side)
@@ -337,4 +357,5 @@ def analyze_frame(image_bytes: bytes, exercise: str, counter: RepCounter) -> dic
         "rep_count": counter.rep_count,
         "good_form_reps": counter.good_form_reps,
         "feedback": feedback,
+        "landmarks": landmarks_payload,
     }

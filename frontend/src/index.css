@@ -79,6 +79,23 @@ body {
   object-fit: cover;
 }
 
+/* Positions the skeleton-overlay canvas exactly on top of the video feed
+   below, so drawing at (0,0)-(width,height) on the canvas lines up 1:1
+   with the visible video box (see skeleton.js for the coordinate math). */
+.webcam-container {
+  position: relative;
+}
+
+.skeleton-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  /* Never intercept clicks meant for anything else on the page. */
+  pointer-events: none;
+}
+
 button {
   margin-top: 1rem;
   padding: 0.65rem 1.4rem;
