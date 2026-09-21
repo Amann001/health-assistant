@@ -170,6 +170,28 @@ _STREAK_PHRASES = {
 }
 
 
+def exercise_intro(exercise: str) -> str:
+    """Plain-English explanation of what counts as good form for this
+    exercise, spoken/shown right when a session starts.
+
+    Deliberately built FROM the real EXERCISES thresholds rather than
+    written as separate, hand-maintained copy — a hardcoded description
+    could quietly drift out of sync with what's actually being checked
+    (e.g. if good_depth_max gets retuned later and nobody remembers to
+    update a separate description string). Generating it from the same
+    numbers the rep counter uses guarantees it always matches reality.
+    """
+    cfg = EXERCISES[exercise]
+    if exercise == "squat":
+        return (
+            "Let's check your squat. For a good rep, bend both knees down to about "
+            f"parallel or lower — that's roughly {cfg['good_depth_max']} degrees or less "
+            "at the knee — while keeping your back fairly upright. I'll count every rep, "
+            "and tell you if the depth and back position both held up."
+        )
+    return f"Let's check your {exercise}. I'll count every rep and tell you how it looked."
+
+
 @dataclass
 class RepCounter:
     """Tracks rep count and form quality for one exercise across a session.

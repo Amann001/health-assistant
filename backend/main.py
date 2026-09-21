@@ -79,6 +79,10 @@ class FormAnalysisResponse(BaseModel):
 class FormStartResponse(BaseModel):
     exercise: str
     status: str
+    # Plain-English explanation of what counts as good form, generated from
+    # the real thresholds in pose_engine.EXERCISES — see exercise_intro().
+    # The frontend speaks and displays this as the session's opening cue.
+    coaching_intro: str
 
 
 @app.post("/api/form/start", response_model=FormStartResponse)
@@ -88,7 +92,11 @@ def start_form_session(exercise: str = Form("squat")):
     if exercise not in _rep_counters:
         exercise = "squat"
     _rep_counters[exercise].reset()
-    return FormStartResponse(exercise=exercise, status="reset")
+    return FormStartResponse(
+        exercise=exercise,
+        status="reset",
+        coaching_intro=pose_engine.exercise_intro(exercise),
+    )
 
 
 @app.post("/api/form/analyze", response_model=FormAnalysisResponse)

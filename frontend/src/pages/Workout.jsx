@@ -103,8 +103,9 @@ function Workout() {
   }
 
   async function startSession() {
+    let data
     try {
-      await startFormSession(EXERCISE)
+      data = await startFormSession(EXERCISE)
     } catch (err) {
       console.error(err)
       setFeedback('Could not reach the backend. Is it running on port 8000?')
@@ -117,7 +118,12 @@ function Workout() {
     setGoodFormStreak(0)
     setDepthProgress(0)
     setVoiceReply('')
-    setFeedback('Session started — get in position.')
+    // The backend generates this from the real angle thresholds (see
+    // pose_engine.exercise_intro), so what you're told to expect can never
+    // drift out of sync with what's actually being checked. Reusing the
+    // ordinary feedback state/auto-speak effect means it's just spoken and
+    // shown like any other cue — no separate UI or speak() call needed.
+    setFeedback(data.coaching_intro || 'Session started — get in position.')
     setSessionActive(true)
     intervalRef.current = setInterval(analyzeOnce, CAPTURE_INTERVAL_MS)
   }
@@ -200,15 +206,16 @@ function Workout() {
         )}
 
         {sessionActive && isListeningSupported() && (
+          // Tap, not hold: recognition already stops itself the moment you
+          // stop talking (the browser's own silence detection), so making
+          // someone physically hold a button through a squat was never
+          // necessary — just adding friction to exactly the moment
+          // (mid-exercise) when a free hand is hardest to spare.
           <button
             className={`talk-button${isListening ? ' listening' : ''}`}
-            onMouseDown={startTalking}
-            onMouseUp={stopTalking}
-            onMouseLeave={stopTalking}
-            onTouchStart={startTalking}
-            onTouchEnd={stopTalking}
+            onClick={isListening ? stopTalking : startTalking}
           >
-            {isListening ? 'Listening…' : 'Hold to Talk'}
+            {isListening ? 'Listening… (tap to stop)' : 'Tap to Talk'}
           </button>
         )}
       </div>
