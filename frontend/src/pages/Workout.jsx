@@ -3,6 +3,8 @@ import WebcamFeed from '../components/WebcamFeed.jsx'
 import { startFormSession, analyzeFormFrame } from '../api.js'
 import { speak, stopSpeaking } from '../speech.js'
 import { drawSkeleton } from '../skeleton.js'
+import { startListening, isListeningSupported } from '../listen.js'
+import { interpretCommand } from '../voiceCommands.js'
 
 // Only squat is implemented server-side so far (see backend/pose_engine.py).
 // This becomes a dropdown once push-up/curl are added.
@@ -29,16 +31,25 @@ function Workout() {
   // anything.
   const hasStartedRef = useRef(false)
   const lastSpokenRef = useRef(null)
+  // While a push-to-talk turn is in progress, the auto-speak effect below
+  // stays quiet — otherwise a coaching cue could start talking over the
+  // user's own command mid-utterance, or bleed into the mic as crosstalk.
+  const listeningRef = useRef(false)
+  const listenControllerRef = useRef(null)
 
   const [sessionActive, setSessionActive] = useState(false)
   const [feedback, setFeedback] = useState('Press "Start Session" to begin.')
   const [repCount, setRepCount] = useState(0)
   const [goodFormReps, setGoodFormReps] = useState(0)
+  const [goodFormStreak, setGoodFormStreak] = useState(0)
+  const [depthProgress, setDepthProgress] = useState(0)
+  const [isListening, setIsListening] = useState(false)
+  const [voiceReply, setVoiceReply] = useState('')
 
   // Speak each new feedback message once, as it arrives — not every 300ms
   // tick, since most ticks repeat the same cue while nothing's changed.
   useEffect(() => {
-    if (!hasStartedRef.current) return
+    if (!hasStartedRef.current || listeningRef.current) return
     if (feedback && feedback !== lastSpokenRef.current) {
       lastSpokenRef.current = feedback
       speak(feedback)
@@ -78,6 +89,8 @@ function Workout() {
       setFeedback(data.feedback)
       setRepCount(data.rep_count)
       setGoodFormReps(data.good_form_reps)
+      setGoodFormStreak(data.good_form_streak)
+      setDepthProgress(data.depth_progress ?? 0)
       if (overlayCanvasRef.current && videoRef.current) {
         drawSkeleton(overlayCanvasRef.current, videoRef.current, data.landmarks)
       }
@@ -101,20 +114,62 @@ function Workout() {
     lastSpokenRef.current = null
     setRepCount(0)
     setGoodFormReps(0)
+    setGoodFormStreak(0)
+    setDepthProgress(0)
+    setVoiceReply('')
     setFeedback('Session started — get in position.')
     setSessionActive(true)
     intervalRef.current = setInterval(analyzeOnce, CAPTURE_INTERVAL_MS)
   }
 
-  function stopSession() {
+  // `interruptSpeech` is false when a voice command triggered the stop, so
+  // the spoken confirmation (built in handleVoiceResult, which already
+  // covers the same summary) gets to finish instead of being cut off by
+  // this function's own routine "Session ended" cue.
+  function stopSession(interruptSpeech = true) {
     clearInterval(intervalRef.current)
     intervalRef.current = null
-    stopSpeaking()
+    if (interruptSpeech) stopSpeaking()
     if (overlayCanvasRef.current && videoRef.current) {
       drawSkeleton(overlayCanvasRef.current, videoRef.current, null)
     }
     setSessionActive(false)
     setFeedback(`Session ended — ${repCount} reps, ${goodFormReps} good form.`)
+  }
+
+  function handleVoiceResult(text) {
+    const { reply, action } = interpretCommand(text, { repCount, goodFormReps, goodFormStreak, feedback })
+    setVoiceReply(reply)
+
+    if (action === 'stop') {
+      // Pre-mark the "Session ended" text stopSession() is about to set as
+      // already spoken, so the auto-speak effect doesn't cut off this
+      // combined reply by trying to announce it a second time.
+      lastSpokenRef.current = `Session ended — ${repCount} reps, ${goodFormReps} good form.`
+      speak(`${reply} That's ${repCount} reps, ${goodFormReps} good form.`)
+      stopSession(false)
+    } else {
+      speak(reply)
+    }
+  }
+
+  function startTalking() {
+    if (!sessionActive || isListening) return
+    listeningRef.current = true
+    setIsListening(true)
+    setVoiceReply('')
+    stopSpeaking() // don't let a coaching cue bleed into the mic as crosstalk
+    listenControllerRef.current = startListening({
+      onResult: handleVoiceResult,
+      onDone: () => {
+        listeningRef.current = false
+        setIsListening(false)
+      },
+    })
+  }
+
+  function stopTalking() {
+    listenControllerRef.current?.stop()
   }
 
   return (
@@ -131,18 +186,45 @@ function Workout() {
       </div>
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
-      {sessionActive ? (
-        <button onClick={stopSession}>Stop Session</button>
-      ) : (
-        <button onClick={startSession}>Start Session</button>
+      {sessionActive && (
+        <div className="depth-gauge" aria-label="Squat depth this rep">
+          <div className="depth-gauge-fill" style={{ width: `${depthProgress * 100}%` }} />
+        </div>
       )}
+
+      <div className="session-controls">
+        {sessionActive ? (
+          <button onClick={() => stopSession(true)}>Stop Session</button>
+        ) : (
+          <button onClick={startSession}>Start Session</button>
+        )}
+
+        {sessionActive && isListeningSupported() && (
+          <button
+            className={`talk-button${isListening ? ' listening' : ''}`}
+            onMouseDown={startTalking}
+            onMouseUp={stopTalking}
+            onMouseLeave={stopTalking}
+            onTouchStart={startTalking}
+            onTouchEnd={stopTalking}
+          >
+            {isListening ? 'Listening…' : 'Hold to Talk'}
+          </button>
+        )}
+      </div>
 
       <div className="workout-stats">
         <span>Reps: {repCount}</span>
         <span>Good form: {goodFormReps}</span>
+        {goodFormStreak >= 2 && (
+          <span className={`streak-badge${goodFormStreak >= 10 ? ' legendary' : goodFormStreak >= 5 ? ' fire' : ''}`}>
+            {goodFormStreak}🔥 streak
+          </span>
+        )}
       </div>
 
       <p className="feedback">{feedback}</p>
+      {voiceReply && <p className="voice-reply">🎙️ {voiceReply}</p>}
     </section>
   )
 }
