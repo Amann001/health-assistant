@@ -16,6 +16,7 @@ health-assistant/
     main.py            FastAPI app: /health, /api/form/*, /api/nutrition/analyze
     pose_engine.py      MediaPipe pose estimation + squat angle/rep-counting logic
     models/            MediaPipe .task model file (downloaded, not checked in — see below)
+    tests/             pytest suite — see "Run the tests" below
     requirements.txt
   frontend/
     src/
@@ -57,6 +58,20 @@ uvicorn main:app --reload --port 8000
 
 Visit http://localhost:8000/health — you should see `{"status": "ok"}`.
 
+## Run the tests
+
+```bash
+cd backend
+source .venv/Scripts/activate
+pytest -v
+```
+
+Covers the rep-counting state machine (including regression tests for the
+two false-positive bugs live testing caught), the angle/depth-progress
+math, and the API endpoints — all without needing a camera, since it feeds
+the same kind of angle data `analyze_frame` would have computed straight
+into the functions under test.
+
 ## Run the frontend
 
 In a second terminal:
@@ -71,16 +86,18 @@ Visit the URL Vite prints (usually http://localhost:5173). Allow camera access w
 
 ## Try it
 
-1. Open the Workout page, allow the camera, click **Start Session**.
+1. Open the Workout page, allow the camera, click **Start Session** — the
+   coach explains what counts as good form for this exercise first
+   (generated from the real angle thresholds, spoken + shown on screen).
 2. Do a few squats in view of the camera — rep count and feedback update live,
    roughly every 300ms, with a skeleton drawn over your body, a live depth
    gauge filling as you descend, and each new cue spoken aloud. String
    together good-form reps for a streak badge (🔥 at 5+, at 10+ it goes
    legendary).
-3. Hold **Hold to Talk** and ask the coach a question — "how many reps have
+3. Tap **Tap to Talk** and ask the coach a question — "how many reps have
    I done," "how's my form," "what's my streak," or say "stop" to end the
-   session by voice. It only answers from the current session (no history
-   yet — see below).
+   session by voice; it stops listening on its own once you stop talking.
+   It only answers from the current session (no history yet — see below).
 4. Click **Stop Session** to end and see a short summary.
 5. The Nutrition page is still Phase 4 territory — "Scan Meal" just proves the
    camera/backend plumbing for now.
@@ -91,14 +108,18 @@ See the "Build roadmap" section of [CLAUDE.md](CLAUDE.md). Currently mid-Phase 3
 
 - Done: continuous frame capture, squat angle/rep-counting logic, a skeleton
   overlay, spoken (TTS) coaching cues, a live depth gauge, good-form streak
-  tracking, and a push-to-talk voice command layer (STT) that answers
-  simple questions from the live session state.
+  tracking, a config-driven pre-session exercise intro, and a tap-to-talk
+  voice command layer (STT) that answers simple questions from the live
+  session state.
 - Two real false-positive bugs were found and fixed through live testing —
   a single-leg motion being mistaken for a squat rep, and a seated
   torso-bow being mistaken for one — see the git history in `pose_engine.py`
   for what each fix actually checks and why.
+- A permanent `pytest` suite (`backend/tests/`) now covers the rep-counter
+  state machine, both false-positive regressions above, the angle/depth
+  math, and the API endpoints — 29 tests, all passing.
 - **Not yet done: a full live squat-verification pass** — the fixes above
-  are synthetically tested but not yet confirmed against a real body/camera.
+  are test-verified but not yet confirmed against a real body/camera.
   The angle thresholds in `EXERCISES["squat"]` are starting guesses and will
   likely need retuning once that happens.
 - The voice command layer only answers from the *current* session (rep
